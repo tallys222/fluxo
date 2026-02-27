@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "445352542909",
+    "project_id": "tallys-financeiro",
+    "storage_bucket": "tallys-financeiro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:445352542909:android:468514bb09dcd84b026dd4",
+        "android_client_info": {
+          "package_name": "com.example.flutter_application_1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCkyA67SQngz0EiWbcVAkdZOTnL7mxXFxo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:445352542909:android:5059b618c96ccc14026dd4",
+        "android_client_info": {
+          "package_name": "com.example.fluxo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCkyA67SQngz0EiWbcVAkdZOTnL7mxXFxo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
