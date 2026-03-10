@@ -144,6 +144,7 @@ class ScannerNotifier extends StateNotifier<ScanState> {
     required String categoryName,
     required String categoryIcon,
     required String categoryColor,
+    int installments = 1,
   }) async {
     try {
       final receiptId = const Uuid().v4();
@@ -156,23 +157,58 @@ class ScannerNotifier extends StateNotifier<ScanState> {
           .doc(receiptId)
           .set(receipt.toFirestore());
 
-      // 2. Create linked transaction
-      final transaction = TransactionModel(
-        id: '',
-        title: receipt.storeName,
-        amount: receipt.total,
-        type: TransactionType.expense,
-        categoryId: categoryId,
-        categoryName: categoryName,
-        categoryIcon: categoryIcon,
-        categoryColor: categoryColor,
-        date: receipt.issuedAt,
-        note:
-            '${receipt.items.length} itens · NF-e ${receipt.accessKey.isNotEmpty ? receipt.accessKey.substring(0, 8) + '...' : ''}',
-        receiptId: receiptId,
-      );
+      // 2. Create transaction(s)
+      final noteText =
+          '${receipt.items.length} itens · NF-e ${receipt.accessKey.isNotEmpty ? receipt.accessKey.substring(0, 8) + '...' : ''}';
 
-      await _txRepo.addTransaction(transaction);
+      if (installments > 1) {
+        // Parcelado: cria N transações sem receiptId (salvo só na 1ª)
+        final groupId = DateTime.now().millisecondsSinceEpoch.toString();
+        final parcelAmount = double.parse(
+          (receipt.total / installments).toStringAsFixed(2),
+        );
+
+        for (int i = 0; i < installments; i++) {
+          final parcelDate = DateTime(
+            receipt.issuedAt.year,
+            receipt.issuedAt.month + i,
+            receipt.issuedAt.day,
+          );
+          final transaction = TransactionModel(
+            id: '',
+            title: '${receipt.storeName} (${i + 1}/$installments)',
+            amount: parcelAmount,
+            type: TransactionType.expense,
+            categoryId: categoryId,
+            categoryName: categoryName,
+            categoryIcon: categoryIcon,
+            categoryColor: categoryColor,
+            date: parcelDate,
+            note: noteText,
+            receiptId: i == 0 ? receiptId : null, // NF-e vinculada só na 1ª parcela
+            installmentGroupId: groupId,
+            installmentCurrent: i + 1,
+            installmentTotal: installments,
+          );
+          await _txRepo.addTransaction(transaction);
+        }
+      } else {
+        // À vista: única transação
+        final transaction = TransactionModel(
+          id: '',
+          title: receipt.storeName,
+          amount: receipt.total,
+          type: TransactionType.expense,
+          categoryId: categoryId,
+          categoryName: categoryName,
+          categoryIcon: categoryIcon,
+          categoryColor: categoryColor,
+          date: receipt.issuedAt,
+          note: noteText,
+          receiptId: receiptId,
+        );
+        await _txRepo.addTransaction(transaction);
+      }
 
       // 3. Invalidate dashboard
       _ref.invalidate(dashboardProvider);

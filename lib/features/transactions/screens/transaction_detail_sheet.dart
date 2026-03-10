@@ -181,7 +181,7 @@ class TransactionDetailSheet extends ConsumerWidget {
           // Body
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
+              padding: EdgeInsets.fromLTRB(20, 0, 20, hasReceipt ? 40 : 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -250,6 +250,30 @@ class TransactionDetailSheet extends ConsumerWidget {
               ),
             ),
           ),
+          // Botão de editar visível no rodapé para lançamentos sem NF-e
+          if (!hasReceipt)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    onEdit();
+                  },
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Editar lançamento'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -335,6 +359,18 @@ class _InfoRow extends StatelessWidget {
                 transaction.receiptId != null ? AppColors.income : null,
           ),
         ),
+        if (transaction.isInstallment) ...[
+          const Gap(10),
+          Expanded(
+            child: _InfoChip(
+              isDark: isDark,
+              icon: Icons.credit_card_outlined,
+              label: 'Parcela',
+              value: '${transaction.installmentCurrent}/${transaction.installmentTotal}',
+              valueColor: AppColors.expense,
+            ),
+          ),
+        ],
       ],
     );
   }

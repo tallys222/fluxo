@@ -59,6 +59,51 @@ class TransactionFormNotifier extends StateNotifier<AsyncValue<void>> {
   TransactionFormNotifier(this._repo, this._ref)
       : super(const AsyncValue.data(null));
 
+  /// Salva N parcelas mensais consecutivas a partir da data da transação base.
+  Future<bool> saveInstallments(TransactionModel base, int installments) async {
+    state = const AsyncValue.loading();
+    try {
+      // UUID único que agrupa todas as parcelas
+      final groupId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      // Valor de cada parcela = total / número de parcelas
+      final parcelAmount = double.parse(
+        (base.amount / installments).toStringAsFixed(2),
+      );
+
+      for (int i = 0; i < installments; i++) {
+        final parcelDate = DateTime(
+          base.date.year,
+          base.date.month + i,
+          base.date.day,
+        );
+        final parcel = TransactionModel(
+          id: '',
+          title: '${base.title} (${i + 1}/$installments)',
+          amount: parcelAmount,
+          type: base.type,
+          categoryId: base.categoryId,
+          categoryName: base.categoryName,
+          categoryIcon: base.categoryIcon,
+          categoryColor: base.categoryColor,
+          date: parcelDate,
+          note: base.note,
+          installmentGroupId: groupId,
+          installmentCurrent: i + 1,
+          installmentTotal: installments,
+        );
+        await _repo.addTransaction(parcel);
+      }
+
+      _ref.invalidate(dashboardProvider);
+      state = const AsyncValue.data(null);
+      return true;
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+      return false;
+    }
+  }
+
   Future<bool> save(TransactionModel transaction) async {
     state = const AsyncValue.loading();
     try {

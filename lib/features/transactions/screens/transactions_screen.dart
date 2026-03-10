@@ -151,20 +151,16 @@ class TransactionsScreen extends ConsumerWidget {
   }
 
   void _openEditSheet(BuildContext context, TransactionModel t) {
-    // Se tem NF-e vinculada, abre o detalhe com os itens
-    if (t.receiptId != null) {
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => TransactionDetailSheet(
-          transaction: t,
-          onEdit: () => _openFormSheet(context, t),
-        ),
-      );
-    } else {
-      _openFormSheet(context, t);
-    }
+    // Sempre abre o detalhe primeiro — padrão para todos os tipos de lançamento
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => TransactionDetailSheet(
+        transaction: t,
+        onEdit: () => _openFormSheet(context, t),
+      ),
+    );
   }
 
   void _openFormSheet(BuildContext context, TransactionModel t) {
@@ -232,7 +228,7 @@ class _MonthBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canGoForward = selected.isBefore(currentMonth);
+    final canGoForward = true; // permite navegar para meses futuros (parcelas)
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [

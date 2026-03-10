@@ -260,7 +260,13 @@ class SeedService {
       'color': '#7F8C8D',
     },
     {
-      'name': 'IPTU / IPVA',
+      'name': 'IPVA',
+      'type': 'expense',
+      'icon': '🏛️',
+      'color': '#95A5A6',
+    },
+    {
+      'name': 'IPTU',
       'type': 'expense',
       'icon': '🏛️',
       'color': '#95A5A6',

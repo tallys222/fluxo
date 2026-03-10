@@ -15,6 +15,13 @@ class TransactionModel {
   final String? note;
   final String? receiptId; // linked NF-e if scanned
 
+  // Installments
+  final String? installmentGroupId; // links all parcels of the same purchase
+  final int? installmentCurrent;   // e.g. 1
+  final int? installmentTotal;     // e.g. 12
+
+  bool get isInstallment => installmentTotal != null && installmentTotal! > 1;
+
   const TransactionModel({
     required this.id,
     required this.title,
@@ -27,6 +34,9 @@ class TransactionModel {
     required this.date,
     this.note,
     this.receiptId,
+    this.installmentGroupId,
+    this.installmentCurrent,
+    this.installmentTotal,
   });
 
   factory TransactionModel.fromFirestore(DocumentSnapshot doc) {
@@ -43,6 +53,9 @@ class TransactionModel {
       date: (data['date'] as Timestamp).toDate(),
       note: data['note'],
       receiptId: data['receiptId'],
+      installmentGroupId: data['installmentGroupId'],
+      installmentCurrent: data['installmentCurrent'],
+      installmentTotal: data['installmentTotal'],
     );
   }
 
@@ -57,6 +70,9 @@ class TransactionModel {
         'date': Timestamp.fromDate(date),
         'note': note,
         'receiptId': receiptId,
+        'installmentGroupId': installmentGroupId,
+        'installmentCurrent': installmentCurrent,
+        'installmentTotal': installmentTotal,
         'createdAt': FieldValue.serverTimestamp(),
       };
 }

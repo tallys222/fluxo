@@ -1,16 +1,90 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
+import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'dart:typed_data';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/formatters.dart';
+import '../../home/widgets/dashboard_widgets.dart';
 import '../providers/reports_provider.dart';
+import '../services/report_pdf_service.dart';
 import '../widgets/charts.dart';
 
-class ReportsScreen extends ConsumerWidget {
+class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ReportsScreen> createState() => _ReportsScreenState();
+}
+
+class _ReportsScreenState extends ConsumerState<ReportsScreen> {
+  bool _exporting = false;
+
+  Future<void> _export() async {
+    setState(() => _exporting = true);
+
+    try {
+      final period = ref.read(reportPeriodProvider);
+
+      // Força o carregamento dos dados necessários
+      final reportsData = await ref.read(reportsProvider.future);
+      final transactions = await ref.read(reportTransactionsProvider.future);
+
+      if (!mounted) return;
+
+      await showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (sheetCtx) => _ExportOptionsSheet(
+          onPreview: () async {
+            Navigator.pop(sheetCtx);
+            final pdfBytes =
+                await _generateBytes(reportsData, period, transactions);
+            await Printing.layoutPdf(onLayout: (_) async => pdfBytes);
+          },
+          onShare: () async {
+            Navigator.pop(sheetCtx);
+            final file = await ReportPdfService().generate(
+              data: reportsData,
+              period: period,
+              transactions: transactions,
+            );
+            await Share.shareXFiles(
+              [XFile(file.path)],
+              subject: 'Relatório Financeiro — Fluxo',
+            );
+          },
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao gerar relatório: $e'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<Uint8List> _generateBytes(reportsData, period, transactions) async {
+    final file = await ReportPdfService().generate(
+      data: reportsData,
+      period: period,
+      transactions: transactions,
+    );
+    return file.readAsBytesSync();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final period = ref.watch(reportPeriodProvider);
     final reportsAsync = ref.watch(reportsProvider);
 
@@ -18,6 +92,22 @@ class ReportsScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Relatórios'),
         actions: [
+          if (_exporting)
+            const Padding(
+              padding: EdgeInsets.only(right: 16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    color: AppColors.accent, strokeWidth: 2),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              tooltip: 'Exportar relatório',
+              onPressed: _export,
+            ),
           IconButton(
             icon: const Icon(Icons.refresh_outlined),
             onPressed: () => ref.invalidate(reportsProvider),
@@ -59,7 +149,14 @@ class ReportsScreen extends ConsumerWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: _KpiRow(data: data),
                   ),
-                  const Gap(24),
+                  const Gap(16),
+
+                  // ── Trend Analysis ─────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _TrendSection(),
+                  ),
+                  const Gap(8),
 
                   // ── Monthly bar chart ──────────────────────────────────
                   if (data.last6Months.length > 1) ...[
@@ -194,6 +291,132 @@ class ReportsScreen extends ConsumerWidget {
         ReportPeriod.month6 => 'Últimos 6 meses',
         ReportPeriod.month12 => 'Último ano',
       };
+}
+
+// ── Export Options Sheet ──────────────────────────────────────────────────
+
+class _ExportOptionsSheet extends StatelessWidget {
+  final VoidCallback onPreview;
+  final VoidCallback onShare;
+
+  const _ExportOptionsSheet({required this.onPreview, required this.onShare});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.surfaceDark : AppColors.surfaceLight,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const Gap(20),
+          Text('Exportar Relatório',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w700)),
+          const Gap(6),
+          Text(
+            'Escolha como deseja exportar o relatório em PDF',
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: AppColors.textSecondary),
+          ),
+          const Gap(24),
+          _OptionTile(
+            icon: Icons.visibility_outlined,
+            color: AppColors.accent,
+            title: 'Visualizar PDF',
+            subtitle: 'Abre o relatório para visualização e impressão',
+            onTap: onPreview,
+          ),
+          const Gap(12),
+          _OptionTile(
+            icon: Icons.share_outlined,
+            color: AppColors.income,
+            title: 'Compartilhar',
+            subtitle: 'Compartilha o arquivo PDF via WhatsApp, e-mail, Drive...',
+            onTap: onShare,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OptionTile extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _OptionTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.2)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const Gap(14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 14)),
+                  const Gap(2),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: color.withOpacity(0.5)),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ── Period Selector ───────────────────────────────────────────────────────
@@ -503,6 +726,7 @@ class _TopExpenseTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final color = _parseColor(expense.categoryColor);
 
     return Padding(
@@ -649,6 +873,283 @@ class _EmptyChart extends StatelessWidget {
       child: Center(
         child: Text(message,
             style: Theme.of(context).textTheme.bodyMedium),
+      ),
+    );
+  }
+}
+
+// ── Trend Section ─────────────────────────────────────────────────────────
+
+class _TrendSection extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final trendAsync = ref.watch(trendProvider);
+
+    return trendAsync.when(
+      loading: () => const SizedBox(
+        height: 60,
+        child: Center(child: CircularProgressIndicator(color: AppColors.accent, strokeWidth: 2)),
+      ),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (data) {
+        if (data.trends.isEmpty) return const SizedBox.shrink();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Gap(16),
+            // Header com visão geral
+            _SectionCard(
+              title: 'Análise de tendência',
+              subtitle: 'Mês atual vs média dos últimos 3 meses',
+              child: Column(
+                children: [
+                  // Banner geral
+                  _OverallTrendBanner(data: data),
+                  const Gap(16),
+                  const Divider(height: 1),
+                  const Gap(16),
+                  // Lista de categorias
+                  ...data.trends.map((t) => _CategoryTrendTile(trend: t)),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _OverallTrendBanner extends StatelessWidget {
+  final TrendData data;
+  const _OverallTrendBanner({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final dir = data.overallDirection;
+    final color = dir == TrendDirection.up
+        ? AppColors.expense
+        : dir == TrendDirection.down
+            ? AppColors.income
+            : AppColors.textSecondary;
+
+    final icon = dir == TrendDirection.up
+        ? Icons.trending_up_rounded
+        : dir == TrendDirection.down
+            ? Icons.trending_down_rounded
+            : Icons.trending_flat_rounded;
+
+    final label = dir == TrendDirection.up
+        ? 'Gastos em alta este mês'
+        : dir == TrendDirection.down
+            ? 'Gastos em queda este mês'
+            : 'Gastos estáveis este mês';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 32),
+          const Gap(14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 14, color: color)),
+                const Gap(2),
+                Text(
+                  'Este mês: ${formatCurrency(data.totalCurrentMonth)}\n'
+                  'Média anterior: ${formatCurrency(data.totalPreviousAvg)}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          const Gap(8),
+          _TrendBadge(percent: data.overallChangePercent, direction: data.overallDirection),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryTrendTile extends StatelessWidget {
+  final CategoryTrend trend;
+  const _CategoryTrendTile({required this.trend});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _parseColor(trend.color);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Ícone categoria
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Text(trend.icon, style: const TextStyle(fontSize: 16)),
+            ),
+          ),
+          const Gap(10),
+          // Nome + barra + valores
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(trend.name,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                const Gap(4),
+                _TrendBar(
+                  current: trend.currentMonth,
+                  previous: trend.previousAvg,
+                  color: color,
+                ),
+                const Gap(3),
+                Text(
+                  '${formatCurrency(trend.currentMonth)}  vs  ${formatCurrency(trend.previousAvg)} (média)',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const Gap(8),
+          // Badge — largura fixa para não causar overflow
+          SizedBox(
+            width: 80,
+            child: _TrendBadge(
+              percent: trend.changePercent,
+              direction: trend.direction,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _parseColor(String hex) {
+    final h = hex.replaceAll('#', '');
+    return Color(int.parse('FF$h', radix: 16));
+  }
+}
+
+class _TrendBar extends StatelessWidget {
+  final double current;
+  final double previous;
+  final Color color;
+
+  const _TrendBar({
+    required this.current,
+    required this.previous,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final max = [current, previous].reduce((a, b) => a > b ? a : b);
+    if (max == 0) return const SizedBox(height: 6);
+
+    final currentRatio = (current / max).clamp(0.0, 1.0);
+    final previousRatio = (previous / max).clamp(0.0, 1.0);
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = constraints.maxWidth;
+      return SizedBox(
+        height: 6,
+        child: Stack(
+          children: [
+            // Fundo (mês anterior = cinza)
+            Container(
+              width: width * previousRatio,
+              height: 6,
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.25),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            // Frente (mês atual = cor da categoria)
+            Container(
+              width: width * currentRatio,
+              height: 6,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+class _TrendBadge extends StatelessWidget {
+  final double percent;
+  final TrendDirection direction;
+
+  const _TrendBadge({required this.percent, required this.direction});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = direction == TrendDirection.up
+        ? AppColors.expense
+        : direction == TrendDirection.down
+            ? AppColors.income
+            : AppColors.textSecondary;
+
+    final icon = direction == TrendDirection.up
+        ? Icons.arrow_upward_rounded
+        : direction == TrendDirection.down
+            ? Icons.arrow_downward_rounded
+            : Icons.remove_rounded;
+
+    final sign = percent > 0 ? '+' : '';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12, color: color),
+            const Gap(2),
+            Text(
+              '$sign${percent.toStringAsFixed(1)}%',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

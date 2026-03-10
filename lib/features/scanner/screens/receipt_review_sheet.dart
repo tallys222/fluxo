@@ -21,6 +21,8 @@ class ReceiptReviewSheet extends ConsumerStatefulWidget {
 class _ReceiptReviewSheetState extends ConsumerState<ReceiptReviewSheet> {
   CategoryModel? _selectedCategory;
   bool _importing = false;
+  bool _isInstallment = false;
+  int _installments = 2;
 
   @override
   void initState() {
@@ -123,6 +125,15 @@ class _ReceiptReviewSheetState extends ConsumerState<ReceiptReviewSheet> {
                   onChanged: (c) => setState(() => _selectedCategory = c),
                 ),
                 const Gap(20),
+                // Installment selector
+                _InstallmentSelector(
+                  enabled: _isInstallment,
+                  installments: _installments,
+                  total: receipt.total,
+                  onToggle: (v) => setState(() => _isInstallment = v),
+                  onChanged: (v) => setState(() => _installments = v),
+                ),
+                const Gap(20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -175,7 +186,9 @@ class _ReceiptReviewSheetState extends ConsumerState<ReceiptReviewSheet> {
                         Text(
                           _selectedCategory == null
                               ? 'Selecione uma categoria'
-                              : 'Importar ${formatCurrency(receipt.total)}',
+                              : _isInstallment && _installments > 1
+                                  ? 'Importar em $_installments parcelas'
+                                  : 'Importar ${formatCurrency(receipt.total)}',
                         ),
                       ],
                     ),
@@ -194,6 +207,7 @@ class _ReceiptReviewSheetState extends ConsumerState<ReceiptReviewSheet> {
           categoryName: _selectedCategory!.name,
           categoryIcon: _selectedCategory!.icon,
           categoryColor: _selectedCategory!.color,
+          installments: _isInstallment ? _installments : 1,
         );
 
     if (!mounted) return;
@@ -519,6 +533,149 @@ class _ReceiptItemTile extends StatelessWidget {
                 .bodyLarge
                 ?.copyWith(fontWeight: FontWeight.w700, fontSize: 13),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Installment Selector ──────────────────────────────────────────────────
+
+class _InstallmentSelector extends StatelessWidget {
+  final bool enabled;
+  final int installments;
+  final double total;
+  final ValueChanged<bool> onToggle;
+  final ValueChanged<int> onChanged;
+
+  const _InstallmentSelector({
+    required this.enabled,
+    required this.installments,
+    required this.total,
+    required this.onToggle,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final parcelValue = total > 0 && installments > 0 ? total / installments : 0.0;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        color: enabled
+            ? AppColors.expense.withOpacity(0.06)
+            : (isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: enabled ? AppColors.expense.withOpacity(0.3) : Colors.transparent,
+        ),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => onToggle(!enabled),
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: enabled
+                          ? AppColors.expense.withOpacity(0.12)
+                          : Colors.grey.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.credit_card_outlined,
+                      size: 18,
+                      color: enabled ? AppColors.expense : AppColors.textSecondary,
+                    ),
+                  ),
+                  const Gap(12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Parcelado',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: enabled ? AppColors.expense : null,
+                          ),
+                        ),
+                        if (enabled && total > 0)
+                          Text(
+                            '$installments × ${formatCurrency(parcelValue)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.expense.withOpacity(0.7),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          )
+                        else
+                          const Text(
+                            'Lançar automaticamente nos próximos meses',
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: enabled,
+                    onChanged: onToggle,
+                    activeColor: AppColors.expense,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (enabled) ...[
+            Divider(height: 1, color: AppColors.expense.withOpacity(0.15), indent: 16, endIndent: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Número de parcelas',
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                  ),
+                  const Gap(10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [2, 3, 4, 5, 6, 10, 12, 18, 24].map((n) {
+                      final selected = installments == n;
+                      return GestureDetector(
+                        onTap: () => onChanged(n),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: selected ? AppColors.expense : AppColors.expense.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '${n}x',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: selected ? Colors.white : AppColors.expense,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

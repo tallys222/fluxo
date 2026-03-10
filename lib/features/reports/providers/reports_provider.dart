@@ -153,11 +153,7 @@ final reportsProvider = FutureProvider.autoDispose<ReportsData>((ref) async {
       totalExpense += t.amount;
       expCatMap.update(
         t.categoryName,
-        (a) {
-          a.amount += t.amount;
-          a.count++;
-          return a;
-        },
+        (a) => a..amount += t.amount..count += 1,
         ifAbsent: () =>
             _CatAcc(t.categoryName, t.categoryIcon, t.categoryColor, t.amount),
       );
@@ -165,11 +161,7 @@ final reportsProvider = FutureProvider.autoDispose<ReportsData>((ref) async {
       totalIncome += t.amount;
       incCatMap.update(
         t.categoryName,
-        (a) {
-          a.amount += t.amount;
-          a.count++;
-          return a;
-        },
+        (a) => a..amount += t.amount..count += 1,
         ifAbsent: () =>
             _CatAcc(t.categoryName, t.categoryIcon, t.categoryColor, t.amount),
       );
@@ -246,3 +238,241 @@ class _CatAcc {
   int count = 1;
   _CatAcc(this.name, this.icon, this.color, this.amount);
 }
+
+// ── Trend Models ──────────────────────────────────────────────────────────
+
+enum TrendDirection { up, down, stable }
+
+class CategoryTrend {
+  final String name;
+  final String icon;
+  final String color;
+  final double currentMonth;   // gasto no mês atual
+  final double previousAvg;   // média dos 3 meses anteriores
+  final double changePercent;  // % de variação
+  final TrendDirection direction;
+
+  const CategoryTrend({
+    required this.name,
+    required this.icon,
+    required this.color,
+    required this.currentMonth,
+    required this.previousAvg,
+    required this.changePercent,
+    required this.direction,
+  });
+}
+
+class TrendData {
+  final List<CategoryTrend> trends;      // ordenado por maior variação absoluta
+  final DateTime referenceMonth;         // mês atual de referência
+  final double totalCurrentMonth;
+  final double totalPreviousAvg;
+  final double overallChangePercent;
+  final TrendDirection overallDirection;
+
+  const TrendData({
+    required this.trends,
+    required this.referenceMonth,
+    required this.totalCurrentMonth,
+    required this.totalPreviousAvg,
+    required this.overallChangePercent,
+    required this.overallDirection,
+  });
+}
+// ── Trend Provider ────────────────────────────────────────────────────────
+// Compara o mês atual com a média dos 3 meses anteriores, por categoria.
+
+final trendProvider = FutureProvider.autoDispose<TrendData>((ref) async {
+  final user = ref.watch(firebaseAuthProvider).currentUser;
+  if (user == null) throw Exception('Não autenticado');
+
+  final firestore = ref.watch(firestoreProvider);
+  final now = DateTime.now();
+
+  // Busca 4 meses: mês atual + 3 anteriores
+  final startDate = DateTime(now.year, now.month - 3, 1);
+  final endDate = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+
+  // Filtra só por data (evita índice composto no Firestore)
+  // O filtro de tipo é feito em memória abaixo
+  final snap = await firestore
+      .collection('users')
+      .doc(user.uid)
+      .collection('transactions')
+      .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startDate))
+      .where('date', isLessThanOrEqualTo: Timestamp.fromDate(endDate))
+      .get();
+
+  // Filtra apenas despesas em memória
+  final transactions = snap.docs
+      .map((d) => TransactionModel.fromFirestore(d))
+      .where((t) => t.type == TransactionType.expense)
+      .toList();
+
+  // Agrupa por mês → categoria → valor
+  // Estrutura: { 'yyyy-M' : { 'categoryName': _CatAcc } }
+  final monthCatMap = <String, Map<String, _CatAcc>>{};
+
+  for (int i = 0; i <= 3; i++) {
+    final m = DateTime(now.year, now.month - i);
+    monthCatMap['${m.year}-${m.month}'] = {};
+  }
+
+  for (final t in transactions) {
+    final key = '${t.date.year}-${t.date.month}';
+    if (!monthCatMap.containsKey(key)) continue;
+    monthCatMap[key]!.update(
+      t.categoryName,
+      (a) => a..amount += t.amount..count += 1,
+      ifAbsent: () =>
+          _CatAcc(t.categoryName, t.categoryIcon, t.categoryColor, t.amount),
+    );
+  }
+
+  final currentKey = '${now.year}-${now.month}';
+  final currentCats = monthCatMap[currentKey] ?? {};
+
+  // Calcula média dos 3 meses anteriores por categoria
+  final prevKeys = [
+    '${DateTime(now.year, now.month - 1).year}-${DateTime(now.year, now.month - 1).month}',
+    '${DateTime(now.year, now.month - 2).year}-${DateTime(now.year, now.month - 2).month}',
+    '${DateTime(now.year, now.month - 3).year}-${DateTime(now.year, now.month - 3).month}',
+  ];
+
+  // Coleta todas as categorias que apareceram em qualquer mês
+  final allCatNames = <String>{};
+  for (final key in [currentKey, ...prevKeys]) {
+    allCatNames.addAll(monthCatMap[key]?.keys ?? []);
+  }
+
+  final trends = <CategoryTrend>[];
+
+  for (final catName in allCatNames) {
+    final currentAmount = currentCats[catName]?.amount ?? 0.0;
+
+    double prevTotal = 0;
+    int prevCount = 0;
+    _CatAcc? meta;
+
+    for (final key in prevKeys) {
+      final acc = monthCatMap[key]?[catName];
+      if (acc != null) {
+        prevTotal += acc.amount;
+        prevCount++;
+        meta ??= acc;
+      }
+    }
+
+    // Usa meta do mês atual se disponível
+    meta = currentCats[catName] ?? meta;
+    if (meta == null) continue;
+
+    final prevAvg = prevCount > 0 ? prevTotal / prevCount : 0.0;
+
+    // Calcula variação
+    double changePercent;
+    TrendDirection direction;
+
+    if (prevAvg == 0 && currentAmount == 0) continue;
+
+    if (prevAvg == 0) {
+      changePercent = 100.0;
+      direction = TrendDirection.up;
+    } else {
+      changePercent = ((currentAmount - prevAvg) / prevAvg) * 100;
+      if (changePercent > 5) {
+        direction = TrendDirection.up;
+      } else if (changePercent < -5) {
+        direction = TrendDirection.down;
+      } else {
+        direction = TrendDirection.stable;
+      }
+    }
+
+    trends.add(CategoryTrend(
+      name: meta.name,
+      icon: meta.icon,
+      color: meta.color,
+      currentMonth: currentAmount,
+      previousAvg: prevAvg,
+      changePercent: changePercent,
+      direction: direction,
+    ));
+  }
+
+  // Ordena por maior variação absoluta primeiro
+  trends.sort((a, b) =>
+      b.changePercent.abs().compareTo(a.changePercent.abs()));
+
+  // Totais gerais
+  final totalCurrent = currentCats.values.fold(0.0, (s, c) => s + c.amount);
+  double prevTotalAll = 0;
+  int prevMonthsWithData = 0;
+  for (final key in prevKeys) {
+    final monthTotal =
+        monthCatMap[key]?.values.fold(0.0, (s, c) => s + c.amount) ?? 0.0;
+    if (monthTotal > 0) {
+      prevTotalAll += monthTotal;
+      prevMonthsWithData++;
+    }
+  }
+  final prevAvgAll =
+      prevMonthsWithData > 0 ? prevTotalAll / prevMonthsWithData : 0.0;
+
+  double overallChange;
+  TrendDirection overallDir;
+  if (prevAvgAll == 0) {
+    overallChange = 0;
+    overallDir = TrendDirection.stable;
+  } else {
+    overallChange = ((totalCurrent - prevAvgAll) / prevAvgAll) * 100;
+    overallDir = overallChange > 5
+        ? TrendDirection.up
+        : overallChange < -5
+            ? TrendDirection.down
+            : TrendDirection.stable;
+  }
+
+  return TrendData(
+    trends: trends,
+    referenceMonth: DateTime(now.year, now.month),
+    totalCurrentMonth: totalCurrent,
+    totalPreviousAvg: prevAvgAll,
+    overallChangePercent: overallChange,
+    overallDirection: overallDir,
+  );
+});
+
+// ── Transactions list for PDF export ─────────────────────────────────────
+
+final reportTransactionsProvider =
+    FutureProvider.autoDispose<List<TransactionModel>>((ref) async {
+  final user = ref.watch(firebaseAuthProvider).currentUser;
+  if (user == null) throw Exception('Não autenticado');
+
+  final period = ref.watch(reportPeriodProvider);
+  final firestore = ref.watch(firestoreProvider);
+
+  final monthCount = switch (period) {
+    ReportPeriod.month1 => 1,
+    ReportPeriod.month3 => 3,
+    ReportPeriod.month6 => 6,
+    ReportPeriod.month12 => 12,
+  };
+
+  final now = DateTime.now();
+  final startDate = DateTime(now.year, now.month - monthCount + 1, 1);
+  final endDate = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+
+  final snap = await firestore
+      .collection('users')
+      .doc(user.uid)
+      .collection('transactions')
+      .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startDate))
+      .where('date', isLessThanOrEqualTo: Timestamp.fromDate(endDate))
+      .orderBy('date', descending: true)
+      .get();
+
+  return snap.docs.map((d) => TransactionModel.fromFirestore(d)).toList();
+});

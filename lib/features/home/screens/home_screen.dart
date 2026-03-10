@@ -305,7 +305,7 @@ class _MonthSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canGoForward = selected.isBefore(currentMonth);
+    final canGoForward = true; // permite navegar para meses futuros (parcelas)
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
