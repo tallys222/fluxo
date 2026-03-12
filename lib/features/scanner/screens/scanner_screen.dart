@@ -1,12 +1,21 @@
+import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/scanner_provider.dart';
+import '../../transactions/models/transaction_model.dart';
+import '../../transactions/repositories/transaction_repository.dart';
+import '../services/bill_parser_service.dart';
 import 'sefaz_webview_screen.dart';
 import 'receipt_review_sheet.dart';
+import 'bill_review_screen.dart';
 
 class ScannerScreen extends ConsumerStatefulWidget {
   const ScannerScreen({super.key});
@@ -47,8 +56,139 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
     }
   }
 
-  Future<void> _checkPermission() async {
-    final status = await Permission.camera.request();
+  OverlayEntry? _loadingOverlay;
+
+  void _showLoadingOverlay() {
+    _loadingOverlay = OverlayEntry(
+      builder: (_) => Container(
+        color: Colors.black54,
+        child: const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Color(0xFFD4AF37)),
+                  SizedBox(height: 16),
+                  Text('Analisando fatura com IA…', textAlign: TextAlign.center),
+                  SizedBox(height: 4),
+                  Text(
+                    'Isso pode levar até 1 minuto',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_loadingOverlay!);
+  }
+
+  void _hideLoadingOverlay() {
+    _loadingOverlay?.remove();
+    _loadingOverlay = null;
+  }
+
+  Future<void> _openBillImport() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      allowMultiple: false,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final path = picked.files.single.path;
+    if (path == null) return;
+    if (!mounted) return;
+
+    _showLoadingOverlay();
+
+    BillParseResult parseResult;
+    try {
+      parseResult = await BillParserService().parsePdf(File(path));
+    } catch (e) {
+      _hideLoadingOverlay();
+      await Future.delayed(const Duration(milliseconds: 150));
+      if (mounted) _showError(e.toString().replaceAll('Exception: ', ''));
+      return;
+    }
+
+    _hideLoadingOverlay();
+    if (!mounted) return;
+
+    if (parseResult.transactions.isEmpty) {
+      _showError('Nenhuma transação encontrada na fatura.');
+      return;
+    }
+
+    final selected = await Navigator.of(context, rootNavigator: false).push<List<BillTransaction>>(
+      MaterialPageRoute(
+        builder: (_) => BillReviewScreen(parseResult: parseResult),
+      ),
+    );
+    if (selected == null || selected.isEmpty || !mounted) return;
+
+    await _importTransactions(selected);
+  }
+
+  void _showError(String message) {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Erro ao importar'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importTransactions(List<BillTransaction> items) async {
+    final repo = TransactionRepository(
+      FirebaseFirestore.instance,
+      FirebaseAuth.instance,
+    );
+    const uuid = Uuid();
+    int count = 0;
+
+    for (final item in items) {
+      try {
+        final tx = TransactionModel(
+          id: uuid.v4(),
+          title: item.description,
+          amount: item.amount,
+          type: item.isCredit ? TransactionType.income : TransactionType.expense,
+          categoryId: item.isCredit ? 'outros' : item.categoryId,
+          categoryName: item.isCredit ? 'Estorno' : item.categoryName,
+          categoryIcon: item.isCredit ? '↩' : item.categoryIcon,
+          categoryColor: item.isCredit ? '#4CAF50' : item.categoryColor,
+          date: item.toDateTime(),
+          note: item.cardLast4 != null ? 'Cartão ••${item.cardLast4}' : null,
+        );
+        await repo.addTransaction(tx);
+        count++;
+      } catch (_) {}
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$count lançamento${count == 1 ? '' : 's'} importado${count == 1 ? '' : 's'}!'),
+          backgroundColor: const Color(0xFFD4AF37),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _checkPermission() async {    final status = await Permission.camera.request();
     setState(() => _hasPermission = status.isGranted);
     if (_hasPermission) _initCamera();
   }
@@ -204,6 +344,12 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
             style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
+          // Importar fatura de cartão
+          IconButton(
+            icon: const Icon(Icons.credit_card_outlined, color: Colors.white),
+            tooltip: 'Importar fatura do cartão',
+            onPressed: _openBillImport,
+          ),
           if (_hasPermission && _controller != null)
             IconButton(
               icon: Icon(

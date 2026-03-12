@@ -51,6 +51,8 @@ dependencies:
   printing: ^5.13.1
   share_plus: ^10.0.0
   path_provider: ^2.1.4
+  cloud_functions: 4.7.6
+  file_picker: ^10.3.10
 
 dev_dependencies:
   flutter_test:
